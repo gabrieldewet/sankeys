@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<head>
+<style>
+
+html *
+{
+   color: black !important;
+   font-family: Arial !important;
+   background-color: white;
+}
+
+h1 {
+	font-size: 24px;
+}
+
+.node rect {
+cursor: move;
+fill-opacity: .9;
+shape-rendering: crispEdges;
+}
+
+.node text {
+	font: 12px arial;
+	fill: black;
+	pointer-events: none;
+	text-shadow: 0 1px 0 white;
+}
+.link {
+	fill: none;
+	stroke: #000;
+	stroke-opacity: .3;
+}
+.link:hover {
+	stroke-opacity: .7;
+}
+</style>
+</head>
+
+<body> 
+ <h1>Sankey Diagram for students registered for CMY 127 (2011 cohort)</h1>
+ 
+<p id="body"></p>
+
+<script src=http://d3js.org/d3.v3.min.js></script>
+ <script>
+d3.sankey = function() {
+var sankey = {},
+nodeWidth = 24,
+nodePadding = 8,
+size = [1, 1],
+nodes = [],
+links = [];
+
+sankey.nodeWidth = function(_) {
+if (!arguments.length) return nodeWidth;
+nodeWidth = +_;
+return sankey;
+};
+
+sankey.nodePadding = function(_) {
+if (!arguments.length) return nodePadding;
+nodePadding = +_;
+return sankey;
+};
+
+sankey.nodes = function(_) {
+if (!arguments.length) return nodes;
+nodes = _;
+return sankey;
+};
+
+sankey.links = function(_) {
+if (!arguments.length) return links;
+links = _;
+return sankey;
+};
+
+sankey.size = function(_) {
+if (!arguments.length) return size;
+size = _;
+return sankey;
+};
+
+sankey.layout = function(iterations) {
+computeNodeLinks();
+computeNodeValues();
+computeNodeBreadths();
+computeNodeDepths(iterations);
+computeLinkDepths();
+return sankey;
+};
+
+sankey.relayout = function() {
+computeLinkDepths();
+return sankey;
+};
+
+sankey.link = function() {
+var curvature = .5;
+
+function link(d) {
+var x0 = d.source.x + d.source.dx,
+x1 = d.target.x,
+xi = d3.interpolateNumber(x0, x1),
+x2 = xi(curvature),
+x3 = xi(1 - curvature),
+y0 = d.source.y + d.sy + d.dy / 2,
+y1 = d.target.y + d.ty + d.dy / 2;
+return "M" + x0 + "," + y0
++ "C" + x2 + "," + y0
++ " " + x3 + "," + y1
++ " " + x1 + "," + y1;
+}
+
+link.curvature = function(_) {
+if (!arguments.length) return curvature;
+curvature = +_;
+return link;
+};
+
+return link;
+};
+
+// Populate the sourceLinks and targetLinks for each node.
+// Also, if the source and target are not objects, assume they are indices.
+function computeNodeLinks() {
+nodes.forEach(function(node) {
+node.sourceLinks = [];
+node.targetLinks = [];
+});
+links.forEach(function(link) {
+var source = link.source,
+target = link.target;
+if (typeof source === "number") source = link.source = nodes[link.source];
+if (typeof target === "number") target = link.target = nodes[link.target];
+source.sourceLinks.push(link);
+target.targetLinks.push(link);
+});
+}
+
+// Compute the value (size) of each node by summing the associated links.
+function computeNodeValues() {
+nodes.forEach(function(node) {
+node.value = Math.max(
+d3.sum(node.sourceLinks, value),
+d3.sum(node.targetLinks, value)
+);
+});
+}
+
+// Iteratively assign the breadth (x-position) for each node.
+// Nodes are assigned the maximum breadth of incoming neighbors plus one;
+// nodes with no incoming links are assigned breadth zero, while
+// nodes with no outgoing links are assigned the maximum breadth.
+function computeNodeBreadths() {
+var remainingNodes = nodes,
+nextNodes,
+x = 0;
+
+while (remainingNodes.length) {
+nextNodes = [];
+remainingNodes.forEach(function(node) {
+node.x = x;
+node.dx = nodeWidth;
+node.sourceLinks.forEach(function(link) {
+nextNodes.push(link.target);
+});
+});
+remainingNodes = nextNodes;
+++x;
+}
+
+//
+moveSinksRight(x);
+scaleNodeBreadths((width - nodeWidth) / (x - 1));
+}
+
+function moveSourcesRight() {
+nodes.forEach(function(node) {
+if (!node.targetLinks.length) {
+node.x = d3.min(node.sourceLinks, function(d) { return d.target.x; }) - 1;
+}
+});
+}
+
+function moveSinksRight(x) {
+nodes.forEach(function(node) {
+if (!node.sourceLinks.length) {
+node.x = x - 1;
+}
+});
+}
+
+function scaleNodeBreadths(kx) {
+nodes.forEach(function(node) {
+node.x *= kx;
+});
+}
+
+function computeNodeDepths(iterations) {
+var nodesByBreadth = d3.nest()
+.key(function(d) { return d.x; })
+.sortKeys(d3.ascending)
+.entries(nodes)
+.map(function(d) { return d.values; });
+
+//
+initializeNodeDepth();
+resolveCollisions();
+for (var alpha = 1; iterations > 0; --iterations) {
+relaxRightToLeft(alpha *= .99);
+resolveCollisions();
+relaxLeftToRight(alpha);
+resolveCollisions();
+}
+
+function initializeNodeDepth() {
+var ky = d3.min(nodesByBreadth, function(nodes) {
+return (size[1] - (nodes.length - 1) * nodePadding) / d3.sum(nodes, value);
+});
+
+nodesByBreadth.forEach(function(nodes) {
+nodes.forEach(function(node, i) {
+node.y = i;
+node.dy = node.value * ky;
+});
+});
+
+links.forEach(function(link) {
+link.dy = link.value * ky;
+});
+}
+
+function relaxLeftToRight(alpha) {
+nodesByBreadth.forEach(function(nodes, breadth) {
+nodes.forEach(function(node) {
+if (node.targetLinks.length) {
+var y = d3.sum(node.targetLinks, weightedSource) / d3.sum(node.targetLinks, value);
+node.y += (y - center(node)) * alpha;
+}
+});
+});
+
+function weightedSource(link) {
+return center(link.source) * link.value;
+}
+}
+
+function relaxRightToLeft(alpha) {
+nodesByBreadth.slice().reverse().forEach(function(nodes) {
+nodes.forEach(function(node) {
+if (node.sourceLinks.length) {
+var y = d3.sum(node.sourceLinks, weightedTarget) / d3.sum(node.sourceLinks, value);
+node.y += (y - center(node)) * alpha;
+}
+});
+});
+
+function weightedTarget(link) {
+return center(link.target) * link.value;
+}
+}
+
+function resolveCollisions() {
+nodesByBreadth.forEach(function(nodes) {
+var node,
+dy,
+y0 = 0,
+n = nodes.length,
+i;
+
+// Push any overlapping nodes down.
+nodes.sort(ascendingDepth);
+for (i = 0; i < n; ++i) {
+node = nodes[i];
+dy = y0 - node.y;
+if (dy > 0) node.y += dy;
+y0 = node.y + node.dy + nodePadding;
+}
+
+// If the bottommost node goes outside the bounds, push it back up.
+dy = y0 - nodePadding - size[1];
+if (dy > 0) {
+y0 = node.y -= dy;
+
+// Push any overlapping nodes back up.
+for (i = n - 2; i >= 0; --i) {
+node = nodes[i];
+dy = node.y + node.dy + nodePadding - y0;
+if (dy > 0) node.y -= dy;
+y0 = node.y;
+}
+}
+});
+}
+
+function ascendingDepth(a, b) {
+return a.y - b.y;
+}
+}
+
+function computeLinkDepths() {
+nodes.forEach(function(node) {
+node.sourceLinks.sort(ascendingTargetDepth);
+node.targetLinks.sort(ascendingSourceDepth);
+});
+nodes.forEach(function(node) {
+var sy = 0, ty = 0;
+node.sourceLinks.forEach(function(link) {
+link.sy = sy;
+sy += link.dy;
+});
+node.targetLinks.forEach(function(link) {
+link.ty = ty;
+ty += link.dy;
+});
+});
+
+function ascendingSourceDepth(a, b) {
+return a.source.y - b.source.y;
+}
+
+function ascendingTargetDepth(a, b) {
+return a.target.y - b.target.y;
+}
+}
+
+function center(node) {
+return node.y + node.dy / 2;
+}
+
+function value(link) {
+return link.value;
+}
+
+return sankey;
+};
+</script>
+
+<script>
+
+ var links = [{"source":0,"target":1,"value":59},{"source":0,"target":33,"value":28},{"source":0,"target":39,"value":13},{"source":0,"target":13,"value":27},{"source":0,"target":41,"value":4},{"source":0,"target":57,"value":5},{"source":0,"target":59,"value":5},{"source":0,"target":8,"value":4},{"source":0,"target":80,"value":15},{"source":0,"target":52,"value":4},{"source":0,"target":46,"value":3},{"source":0,"target":83,"value":2},{"source":1,"target":2,"value":50},{"source":1,"target":18,"value":160},{"source":1,"target":60,"value":7},{"source":1,"target":34,"value":11},{"source":1,"target":62,"value":1},{"source":1,"target":22,"value":1},{"source":2,"target":3,"value":6},{"source":2,"target":14,"value":4},{"source":2,"target":29,"value":6},{"source":2,"target":38,"value":92},{"source":2,"target":26,"value":16},{"source":2,"target":35,"value":41},{"source":2,"target":89,"value":1},{"source":3,"target":4,"value":6},{"source":4,"target":5,"value":21},{"source":4,"target":48,"value":21},{"source":4,"target":40,"value":1},{"source":5,"target":6,"value":329},{"source":5,"target":50,"value":1},{"source":5,"target":73,"value":3},{"source":5,"target":66,"value":3},{"source":5,"target":56,"value":3},{"source":5,"target":17,"value":1},{"source":7,"target":8,"value":42},{"source":7,"target":59,"value":1},{"source":7,"target":52,"value":1},{"source":7,"target":33,"value":3},{"source":7,"target":1,"value":1},{"source":7,"target":13,"value":1},{"source":8,"target":9,"value":29},{"source":8,"target":2,"value":14},{"source":8,"target":67,"value":1},{"source":8,"target":34,"value":4},{"source":9,"target":10,"value":24},{"source":9,"target":23,"value":4},{"source":9,"target":26,"value":1},{"source":9,"target":35,"value":1},{"source":10,"target":11,"value":59},{"source":10,"target":19,"value":9},{"source":10,"target":4,"value":35},{"source":10,"target":15,"value":12},{"source":10,"target":74,"value":20},{"source":10,"target":78,"value":3},{"source":10,"target":30,"value":2},{"source":10,"target":71,"value":3},{"source":10,"target":85,"value":1},{"source":11,"target":5,"value":255},{"source":11,"target":36,"value":1},{"source":11,"target":16,"value":6},{"source":11,"target":65,"value":3},{"source":11,"target":27,"value":3},{"source":11,"target":48,"value":5},{"source":11,"target":64,"value":1},{"source":12,"target":13,"value":29},{"source":12,"target":41,"value":2},{"source":12,"target":33,"value":4},{"source":12,"target":8,"value":1},{"source":12,"target":83,"value":1},{"source":12,"target":52,"value":1},{"source":12,"target":1,"value":1},{"source":13,"target":2,"value":41},{"source":13,"target":34,"value":4},{"source":13,"target":67,"value":15},{"source":13,"target":18,"value":2},{"source":13,"target":53,"value":1},{"source":14,"target":15,"value":1},{"source":14,"target":11,"value":3},{"source":15,"target":16,"value":42},{"source":15,"target":27,"value":22},{"source":15,"target":65,"value":1},{"source":15,"target":5,"value":1},{"source":15,"target":31,"value":1},{"source":16,"target":17,"value":29},{"source":16,"target":50,"value":1},{"source":16,"target":54,"value":15},{"source":16,"target":6,"value":7},{"source":16,"target":32,"value":2},{"source":16,"target":73,"value":1},{"source":16,"target":86,"value":1},{"source":18,"target":10,"value":62},{"source":18,"target":26,"value":104},{"source":18,"target":35,"value":7},{"source":18,"target":29,"value":1},{"source":19,"target":5,"value":10},{"source":20,"target":21,"value":25},{"source":20,"target":33,"value":2},{"source":20,"target":13,"value":1},{"source":20,"target":1,"value":1},{"source":21,"target":22,"value":15},{"source":21,"target":2,"value":16},{"source":21,"target":34,"value":1},{"source":22,"target":23,"value":10},{"source":22,"target":10,"value":8},{"source":23,"target":24,"value":28},{"source":23,"target":63,"value":13},{"source":23,"target":11,"value":10},{"source":24,"target":5,"value":48},{"source":24,"target":36,"value":3},{"source":24,"target":40,"value":12},{"source":24,"target":16,"value":7},{"source":24,"target":65,"value":8},{"source":24,"target":72,"value":5},{"source":24,"target":79,"value":1},{"source":24,"target":31,"value":1},{"source":25,"target":1,"value":157},{"source":25,"target":41,"value":5},{"source":25,"target":46,"value":2},{"source":25,"target":55,"value":1},{"source":25,"target":33,"value":10},{"source":25,"target":59,"value":3},{"source":25,"target":8,"value":1},{"source":25,"target":52,"value":1},{"source":25,"target":13,"value":3},{"source":25,"target":80,"value":9},{"source":25,"target":21,"value":2},{"source":26,"target":15,"value":52},{"source":26,"target":24,"value":57},{"source":26,"target":30,"value":2},{"source":26,"target":11,"value":11},{"source":26,"target":4,"value":2},{"source":27,"target":28,"value":1},{"source":27,"target":6,"value":27},{"source":27,"target":56,"value":1},{"source":27,"target":73,"value":1},{"source":27,"target":86,"value":1},{"source":29,"target":30,"value":41},{"source":30,"target":31,"value":46},{"source":30,"target":27,"value":1},{"source":31,"target":32,"value":20},{"source":31,"target":54,"value":28},{"source":33,"target":34,"value":55},{"source":33,"target":18,"value":3},{"source":33,"target":60,"value":1},{"source":34,"target":35,"value":79},{"source":34,"target":26,"value":1},{"source":34,"target":29,"value":1},{"source":34,"target":23,"value":2},{"source":35,"target":11,"value":133},{"source":35,"target":63,"value":1},{"source":35,"target":15,"value":1},{"source":36,"target":6,"value":4},{"source":37,"target":21,"value":5},{"source":37,"target":43,"value":13},{"source":37,"target":1,"value":1},{"source":37,"target":33,"value":1},{"source":38,"target":11,"value":58},{"source":38,"target":30,"value":1},{"source":38,"target":71,"value":31},{"source":38,"target":19,"value":1},{"source":38,"target":15,"value":1},{"source":39,"target":18,"value":4},{"source":39,"target":67,"value":2},{"source":39,"target":34,"value":3},{"source":39,"target":9,"value":1},{"source":39,"target":53,"value":1},{"source":39,"target":88,"value":2},{"source":40,"target":28,"value":23},{"source":40,"target":75,"value":3},{"source":40,"target":6,"value":6},{"source":41,"target":42,"value":12},{"source":41,"target":2,"value":14},{"source":41,"target":47,"value":1},{"source":41,"target":18,"value":1},{"source":41,"target":67,"value":1},{"source":42,"target":10,"value":9},{"source":42,"target":23,"value":3},{"source":43,"target":44,"value":8},{"source":43,"target":2,"value":3},{"source":43,"target":22,"value":1},{"source":43,"target":34,"value":2},{"source":44,"target":10,"value":4},{"source":44,"target":23,"value":4},{"source":45,"target":46,"value":14},{"source":45,"target":1,"value":1},{"source":45,"target":33,"value":1},{"source":46,"target":47,"value":12},{"source":46,"target":2,"value":6},{"source":46,"target":34,"value":1},{"source":47,"target":10,"value":6},{"source":47,"target":23,"value":6},{"source":47,"target":35,"value":1},{"source":48,"target":49,"value":18},{"source":48,"target":66,"value":30},{"source":48,"target":6,"value":1},{"source":48,"target":17,"value":1},{"source":51,"target":52,"value":7},{"source":51,"target":59,"value":1},{"source":51,"target":1,"value":1},{"source":51,"target":33,"value":2},{"source":52,"target":53,"value":5},{"source":52,"target":2,"value":5},{"source":52,"target":18,"value":1},{"source":52,"target":67,"value":2},{"source":52,"target":34,"value":1},{"source":53,"target":23,"value":3},{"source":53,"target":10,"value":3},{"source":53,"target":35,"value":1},{"source":55,"target":2,"value":3},{"source":55,"target":77,"value":7},{"source":55,"target":18,"value":1},{"source":57,"target":58,"value":8},{"source":57,"target":2,"value":4},{"source":57,"target":22,"value":1},{"source":58,"target":23,"value":6},{"source":58,"target":10,"value":1},{"source":58,"target":26,"value":1},{"source":58,"target":35,"value":1},{"source":59,"target":60,"value":1},{"source":59,"target":62,"value":9},{"source":59,"target":18,"value":2},{"source":59,"target":2,"value":10},{"source":59,"target":67,"value":1},{"source":59,"target":34,"value":1},{"source":59,"target":58,"value":1},{"source":60,"target":29,"value":33},{"source":60,"target":35,"value":1},{"source":61,"target":59,"value":15},{"source":61,"target":1,"value":3},{"source":61,"target":43,"value":1},{"source":61,"target":33,"value":1},{"source":61,"target":13,"value":1},{"source":61,"target":57,"value":1},{"source":62,"target":23,"value":2},{"source":62,"target":10,"value":8},{"source":62,"target":35,"value":1},{"source":63,"target":64,"value":8},{"source":63,"target":27,"value":5},{"source":63,"target":16,"value":1},{"source":64,"target":54,"value":2},{"source":64,"target":76,"value":2},{"source":64,"target":6,"value":5},{"source":65,"target":66,"value":7},{"source":65,"target":6,"value":6},{"source":67,"target":35,"value":1},{"source":67,"target":10,"value":14},{"source":67,"target":23,"value":7},{"source":68,"target":33,"value":4},{"source":68,"target":55,"value":10},{"source":69,"target":57,"value":7},{"source":69,"target":1,"value":1},{"source":69,"target":33,"value":1},{"source":70,"target":1,"value":3},{"source":70,"target":41,"value":18},{"source":70,"target":33,"value":2},{"source":70,"target":13,"value":1},{"source":71,"target":48,"value":24},{"source":71,"target":5,"value":3},{"source":71,"target":82,"value":7},{"source":72,"target":73,"value":3},{"source":72,"target":6,"value":3},{"source":74,"target":40,"value":19},{"source":74,"target":81,"value":1},{"source":77,"target":23,"value":2},{"source":77,"target":10,"value":3},{"source":77,"target":26,"value":1},{"source":77,"target":35,"value":1},{"source":78,"target":5,"value":2},{"source":78,"target":65,"value":1},{"source":79,"target":6,"value":1},{"source":80,"target":60,"value":25},{"source":81,"target":6,"value":1},{"source":82,"target":6,"value":6},{"source":82,"target":17,"value":1},{"source":83,"target":84,"value":2},{"source":83,"target":62,"value":1},{"source":84,"target":10,"value":2},{"source":85,"target":72,"value":1},{"source":87,"target":1,"value":1},{"source":87,"target":80,"value":1},{"source":88,"target":23,"value":2},{"source":89,"target":30,"value":1}]
+ var nodes = [{"name":"BSc: Biological Sciences"},{"name":"Other"},{"name":"Graduated"},{"name":"BScHons"},{"name":"BScHons (G)"},{"name":"Out"},{"name":"Out"},{"name":"BSc: Medical Sciences"},{"name":"BSc: Medical Sciences"},{"name":"BSc: Medical Sciences"},{"name":"Graduated"},{"name":"Out"},{"name":"BSc: Human Physiology"},{"name":"BSc: Human Physiology"},{"name":"PostGrad (G)"},{"name":"Other"},{"name":"Other"},{"name":"Other"},{"name":"Other"},{"name":"PostGrad (G)"},{"name":"BSc: Geology"},{"name":"BSc: Geology"},{"name":"BSc: Geology"},{"name":"BSc"},{"name":"Graduated"},{"name":"Other"},{"name":"Other"},{"name":"Graduated"},{"name":"MScAgri"},{"name":"BVeterinary Science"},{"name":"BVeterinary Science"},{"name":"BVeterinary Science"},{"name":"BVeterinary Science"},{"name":"Out"},{"name":"Out"},{"name":"Out"},{"name":"PostGrad (G)"},{"name":"BSc: Env and Engineering Geology"},{"name":"BScHons (G)"},{"name":"BSc: Biological Sciences"},{"name":"MScAgri"},{"name":"BSc: Biochemistry"},{"name":"BSc: Biochemistry"},{"name":"BSc: Env and Engineering Geology"},{"name":"BSc: Env and Engineering Geology"},{"name":"BSc: Chemistry"},{"name":"BSc: Chemistry"},{"name":"BSc: Chemistry"},{"name":"MSc"},{"name":"MSc (G)"},{"name":"BScHons"},{"name":"BSc: Human Genetics"},{"name":"BSc: Human Genetics"},{"name":"BSc: Human Genetics"},{"name":"Graduated"},{"name":"BSc: Physics"},{"name":"BScHons (G)"},{"name":"BSc: Genetics"},{"name":"BSc: Genetics"},{"name":"BSc: Microbiology"},{"name":"BVeterinary Science: Veterinary Science"},{"name":"BSc: Microbiology"},{"name":"BSc: Microbiology"},{"name":"BSc"},{"name":"BSc"},{"name":"BScHons (G)"},{"name":"MSc"},{"name":"BSc: Human Physiology"},{"name":"BSc: Physics"},{"name":"BSc: Genetics"},{"name":"BSc: Biochemistry"},{"name":"MSc"},{"name":"PostGrad"},{"name":"PostGrad"},{"name":"MScAgri"},{"name":"MScAgri (G)"},{"name":"BSc"},{"name":"BSc: Physics"},{"name":"BScHons"},{"name":"BScHons"},{"name":"BVeterinary Science: Veterinary Science"},{"name":"MScAgri (G)"},{"name":"MSc (G)"},{"name":"BCMP: Clinical Medical Practice"},{"name":"BCMP: Clinical Medical Practice"},{"name":"PostGrad"},{"name":"PostGrad (G)"},{"name":"BVeterinary Science: Veterinary Science"},{"name":"BSc: Biological Sciences"},{"name":"Veterinary Science UG"}]
+ var margin = {top: 1, right: 1, bottom: 6, left: 1},
+width = screen.availWidth - margin.left - margin.right - 32,
+height = screen.availHeight - margin.top - margin.bottom - 192;
+
+var formatNumber = d3.format(",.0f"),
+format = function(d) { return formatNumber(d); },
+color = d3.scale.category20();
+
+var svg = d3.select("body").append("svg")
+.attr("width", width + margin.left + margin.right)
+.attr("height", height + margin.top + margin.bottom)
+.append("g")
+.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+var sankey = d3.sankey()
+.nodes(d3.values(nodes))
+.links(links)
+.nodeWidth(15)
+.nodePadding(10)
+.size([width, height])
+.layout(32);
+
+var path = sankey.link();
+
+var link = svg.append("g").selectAll(".link")
+.data(sankey.links())
+.enter().append("path")
+.attr("class", "link")
+.attr("d", path)
+.style("stroke-width", function(d) { return Math.max(1, d.dy); })
+.sort(function(a, b) { return b.dy - a.dy; });
+
+link.append("title")
+.text(function(d) { return d.source.name + " → " + d.target.name + "\n" + format(d.value) + " students";});
+
+var node = svg.append("g").selectAll(".node")
+.data(sankey.nodes())
+.enter().append("g")
+.attr("class", "node")
+.attr("transform", function(d) { return "translate(" + d.x + "," + d.y + ")"; })
+.call(d3.behavior.drag()
+.origin(function(d) { return d; })
+.on("dragstart", function() { this.parentNode.appendChild(this); })
+.on("drag", dragmove));
+
+node.append("rect")
+.attr("height", function(d) { return d.dy; })
+.attr("width", sankey.nodeWidth())
+.style("fill", function(d) { return d.color = color(d.name.replace(/ .*/, "")); })
+.style("stroke", function(d) { return d3.rgb(d.color).darker(2); })
+.append("title")
+.text(function(d) { return d.name + "\n" + format(d.value) + " students"; });
+
+node.append("text")
+.attr("x", -6)
+.attr("y", function(d) { return d.dy / 2; })
+.attr("dy", ".35em")
+.attr("text-anchor", "end")
+.attr("transform", null)
+.text(function(d) { return d.name; })
+.filter(function(d) { return d.x < width / 2; })
+.attr("x", 6 + sankey.nodeWidth())
+.attr("text-anchor", "start");
+
+function dragmove(d) {
+d3.select(this).attr("transform", "translate(" + d.x + "," + (d.y = Math.max(0, Math.min(height - d.dy, d3.event.y))) + ")");
+sankey.relayout();
+link.attr("d", path);
+}
+
+</script>
+
+ </body>

@@ -1,0 +1,20 @@
+Steps for generating module based Sankey graphs:
+------------------------------------------------
+
+1) Read in Student, Plan and Mark data
+	- Student data will be used to track students through years
+	- Plan data used to name academic programmes in Student data based on plan codes from Plan data
+	- Mark data to be used to identify students registered for specific module in given year.
+
+2) Get data frame containing all students registered for a given module.
+	
+3) Find 1st year cohort of students 
+	- In case of 3rd year module: Minus 2 years for 1st year
+	- Return only students numbers then filter back
+	- Cohort years: 2011 -> 2015
+	
+4) Modules:
+	- CMY 127
+	- CMY 382-385
+
+5) Focus on following programmes:
