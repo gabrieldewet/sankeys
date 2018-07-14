@@ -10,4 +10,4 @@
 ### Notes:
 * Third year module Sankeys generated with cohort being -3 years, eg:
 	* 3rd year students in 2014 --> 2011 Cohort
-* For all Sankeys, generate for cohorts 2011 -> 2013
+* For all Sankeys, generate for cohorts 2011 -> 2015
